@@ -2,6 +2,9 @@ type OpCode = u16;
 
 use crate::graphics;
 
+// short is actually just 4 bits.
+type short = u8;
+
 // https://multigesture.net/articles/how-to-write-an-emulator-chip-8-interpreter/
 
 pub struct Compy {
@@ -13,7 +16,7 @@ pub struct Compy {
     pub delay_timer: u8,
     pub sound_timer: u8,
     pub stack: [u16; 16],
-    pub sp: u16,
+    pub sp: usize,
     pub key: [bool; 16],
 
     pub draw_flag: bool,
@@ -67,63 +70,133 @@ impl Compy {
         // Update timers
         ()
     }
-    pub fn clear_display(&mut self) {
+    fn clear_display(&mut self) {
         self.gfx.clear();
     }
 
+    fn return_from_sub(&mut self) {
+        self.pc = self.stack[self.sp];
+        self.sp -= 1;
+    }
+
+    fn step_pc(&mut self) {
+        self.pc += 2;
+    }
+
+    fn skip_when(&mut self, cond: bool) {
+        if cond {
+            self.step();
+            self.step();
+        } else {
+            self.step();
+        }
+    }
+
+    fn subroutine(&mut self, addr: u16) {
+        self.stack[self.sp] = self.pc;
+        self.pc = addr;
+    }
+
     pub fn run_op(&mut self, opcode: OpCode) {
-        let shorts: (u8, u8, u8, u8) = (
-            ((opcode & 0xF000) >> 12) as u8,
-            ((opcode & 0x0F00) >> 8) as u8,
-            ((opcode & 0x00F0) >> 4) as u8,
-            (opcode & 0x000F) as u8,
+        let shorts: (short, short, short, short) = (
+            ((opcode & 0xF000) >> 12) as short,
+            ((opcode & 0x0F00) >> 8) as short,
+            ((opcode & 0x00F0) >> 4) as short,
+            (opcode & 0x000F) as short,
         );
         match shorts {
             // clear display
-            (0x0, 0x0, 0xE, 0x0) => self.clear_display(),
+            (0x0, 0x0, 0xE, 0x0) => {
+                self.clear_display();
+                self.step_pc();
+            }
             // RETURN
-            (0x0, 0x0, 0xE, 0xE) => (),
+            (0x0, 0x0, 0xE, 0xE) => {
+                self.return_from_sub();
+            }
             // Call machine code (optional)
-            (0x0, x, y, z) => (),
-            // GOTO NNN
-            (0x1, n1, n2, n3) => (),
+            (0x0, _x, _y, _z) => {
+                panic!("Machine code procedures not implemented.");
+            }
+            // subroutine NNN
+            (0x1, n1, n2, n3) => self.pc = addr(n1, n2, n3),
             // Call Subroutine at NNN
-            (0x2, n1, n2, n3) => (),
+            (0x2, n1, n2, n3) => self.subroutine(addr(n1, n2, n3)),
             // Skip when (Vx == NN)
-            (0x3, x, n1, n2) => (),
+            (0x3, x, n1, n2) => {
+                self.skip_when(self.reg[x as usize] == val(n1, n2));
+            }
             // Skip when (Vx != NN)
-            (0x4, x, n1, n2) => (),
+            (0x4, x, n1, n2) => self.skip_when(self.reg[x as usize] != val(n1, n2)),
             // Skip when (Vx == Vy)
-            (0x5, x, y, 0x0) => (),
+            (0x5, x, y, 0x0) => self.skip_when(self.reg[x as usize] == self.reg[y as usize]),
             // Vx = NN
-            (0x6, x, n1, n2) => (),
+            (0x6, x, n1, n2) => {
+                self.reg[x as usize] = val(n1, n2);
+                self.step();
+            }
             // Vx += NN
-            (0x7, x, n1, n2) => (),
+            (0x7, x, n1, n2) => {
+                self.reg[x as usize] += val(n1, n2);
+                self.step();
+            }
             // Vx = Vy
-            (0x8, x, y, 0x0) => (),
+            (0x8, x, y, 0x0) => {
+                self.reg[x as usize] = self.reg[y as usize];
+                self.step();
+            }
             // Bitwise OR, Vx |= Vy
-            (0x8, x, y, 0x1) => (),
+            (0x8, x, y, 0x1) => {
+                self.reg[x as usize] |= self.reg[y as usize];
+                self.step();
+            }
             // Bitwise AND, Vx &= Vy
-            (0x8, x, y, 0x2) => (),
+            (0x8, x, y, 0x2) => {
+                self.reg[x as usize] &= self.reg[y as usize];
+                self.step();
+            }
             // Bitwise XOR, Vx ^= Vy
-            (0x8, x, y, 0x3) => (),
+            (0x8, x, y, 0x3) => {
+                self.reg[x as usize] ^= self.reg[y as usize];
+                self.step();
+            }
             // Vx += Vy
-            (0x8, x, y, 0x4) => (),
+            (0x8, x, y, 0x4) => {
+                self.reg[x as usize] += self.reg[y as usize];
+                self.step();
+            }
             // Vx -= Vy
-            (0x8, x, y, 0x5) => (),
+            (0x8, x, y, 0x5) => {
+                self.reg[x as usize] -= self.reg[y as usize];
+                self.step();
+            }
             // Vx >>= 1
-            (0x8, x, y, 0x6) => (),
+            (0x8, x, y, 0x6) => {
+                self.reg[x as usize] >>= self.reg[y as usize];
+                self.step();
+            }
             // Vx = Vy - Vx
-            (0x8, x, y, 0x7) => (),
+            (0x8, x, y, 0x7) => {
+                self.reg[x as usize] = self.reg[y as usize] - self.reg[x as usize];
+                self.step();
+            }
             // Vx <<= 1
-            (0x8, x, y, 0xE) => (),
+            (0x8, x, y, 0xE) => {
+                self.reg[x as usize] <<= self.reg[y as usize];
+                self.step();
+            }
             // Skip when Vx != Vy
-            (0x9, x, y, 0x0) => (),
+            (0x9, x, y, 0x0) => self.skip_when(self.reg[x as usize] != self.reg[y as usize]),
             // I = NNN
-            (0xA, n1, n2, n3) => (),
+            (0xA, n1, n2, n3) => {
+                self.i = addr(n1, n2, n3);
+                self.step_pc();
+            }
             // PC = V0 + NNN
-            (0xB, n1, n2, n3) => (),
+            // TODO: do we store a stack pointer here?
+            (0xB, n1, n2, n3) => self.pc = self.reg[0] as u16 + addr(n1, n2, n3),
             // draw_sprite(Vx, Vy, N)
+            // TODO: impl
             (0xD, x, y, n) => (),
             // Skip if (key(Vx))
             (0xE, x, 0x9, 0xE) => (),
@@ -155,6 +228,15 @@ impl Compy {
         }
     }
 }
+
+pub fn addr(n1: short, n2: short, n3: short) -> u16 {
+    ((n1 as u16) << 8) & ((n2 as u16) << 4) & (n3 as u16)
+}
+
+pub fn val(n1: short, n2: short) -> u8 {
+    ((n1 as u8) << 4) & (n2 as u8)
+}
+
 // (0x0, 0x0, 0xE, 0x0) => self.cls(),
 // (0x0, 0x0, 0xE, 0xE) => self.ret(),
 // // 0NNN = sys addr : ignore
