@@ -2,8 +2,10 @@ type OpCode = u16;
 
 use crate::graphics;
 
-// short is actually just 4 bits.
-type short = u8;
+use sdl2::keyboard::Keycode;
+
+// Short is actually just 4 bits.
+type Short = u8;
 
 // https://multigesture.net/articles/how-to-write-an-emulator-chip-8-interpreter/
 
@@ -26,17 +28,13 @@ pub fn machine() {
     // 0x000-0x1FF - Chip 8 interpreter (contains font set in emu)
     // 0x050-0x0A0 - Used for the built in 4x5 pixel font set (0-F)
     // 0x200-0xFFF - Program ROM and work RAM
-    let mut compy = Compy::new();
     println!("hi");
 
     loop {
         // Emulate one cycle
-        compy.step();
 
         // If the draw flag is set, update the screen
-        if compy.draw_flag {
-            // drawGraphics();
-        }
+        // drawGraphics();
 
         // Store key press state (Press and Release)
         // myChip8.setKeys();
@@ -59,19 +57,49 @@ impl Compy {
             draw_flag: false,
         };
     }
-    pub fn step(&mut self) {
+    pub fn single_cycle(&mut self) {
         let pc = self.pc as usize;
         // Fetch Opcode
         let opcode: OpCode = ((self.memory[pc] as u16) << 8) | (self.memory[pc + 1] as u16);
         self.run_op(opcode);
-        // Decode Opcode
-        // Execute Opcode
 
         // Update timers
         ()
     }
     fn clear_display(&mut self) {
         self.gfx.clear();
+    }
+
+    // Keypad                   Keyboard
+    // +-+-+-+-+                +-+-+-+-+
+    // |1|2|3|C|                |1|2|3|4|
+    // +-+-+-+-+                +-+-+-+-+
+    // |4|5|6|D|                |Q|W|E|R|
+    // +-+-+-+-+       =>       +-+-+-+-+
+    // |7|8|9|E|                |A|S|D|F|
+    // +-+-+-+-+                +-+-+-+-+
+    // |A|0|B|F|                |Z|X|C|V|
+    // +-+-+-+-+                +-+-+-+-+
+    pub fn set_key_state(&mut self, state: bool, keycode: Keycode) {
+        match keycode {
+            Keycode::Num1 => self.key[0x1] = state,
+            Keycode::Num2 => self.key[0x2] = state,
+            Keycode::Num3 => self.key[0x3] = state,
+            Keycode::Num4 => self.key[0xc] = state,
+            Keycode::Q => self.key[0x4] = state,
+            Keycode::W => self.key[0x5] = state,
+            Keycode::E => self.key[0x6] = state,
+            Keycode::R => self.key[0xd] = state,
+            Keycode::A => self.key[0x7] = state,
+            Keycode::S => self.key[0x8] = state,
+            Keycode::D => self.key[0x9] = state,
+            Keycode::F => self.key[0xe] = state,
+            Keycode::Z => self.key[0xa] = state,
+            Keycode::X => self.key[0x0] = state,
+            Keycode::C => self.key[0xb] = state,
+            Keycode::V => self.key[0xf] = state,
+            _ => (),
+        }
     }
 
     fn return_from_sub(&mut self) {
@@ -85,10 +113,10 @@ impl Compy {
 
     fn skip_when(&mut self, cond: bool) {
         if cond {
-            self.step();
-            self.step();
+            self.step_pc();
+            self.step_pc();
         } else {
-            self.step();
+            self.step_pc();
         }
     }
 
@@ -97,12 +125,18 @@ impl Compy {
         self.pc = addr;
     }
 
+    // Get a slice of memory starting from I
+    fn mem_slice(&self, size: usize) -> &[u8] {
+        let i: usize = self.i as usize;
+        &self.memory[i..i + size]
+    }
+
     pub fn run_op(&mut self, opcode: OpCode) {
-        let shorts: (short, short, short, short) = (
-            ((opcode & 0xF000) >> 12) as short,
-            ((opcode & 0x0F00) >> 8) as short,
-            ((opcode & 0x00F0) >> 4) as short,
-            (opcode & 0x000F) as short,
+        let shorts: (Short, Short, Short, Short) = (
+            ((opcode & 0xF000) >> 12) as Short,
+            ((opcode & 0x0F00) >> 8) as Short,
+            ((opcode & 0x00F0) >> 4) as Short,
+            (opcode & 0x000F) as Short,
         );
         match shorts {
             // clear display
@@ -133,57 +167,57 @@ impl Compy {
             // Vx = NN
             (0x6, x, n1, n2) => {
                 self.reg[x as usize] = val(n1, n2);
-                self.step();
+                self.step_pc();
             }
             // Vx += NN
             (0x7, x, n1, n2) => {
                 self.reg[x as usize] += val(n1, n2);
-                self.step();
+                self.step_pc();
             }
             // Vx = Vy
             (0x8, x, y, 0x0) => {
                 self.reg[x as usize] = self.reg[y as usize];
-                self.step();
+                self.step_pc();
             }
             // Bitwise OR, Vx |= Vy
             (0x8, x, y, 0x1) => {
                 self.reg[x as usize] |= self.reg[y as usize];
-                self.step();
+                self.step_pc();
             }
             // Bitwise AND, Vx &= Vy
             (0x8, x, y, 0x2) => {
                 self.reg[x as usize] &= self.reg[y as usize];
-                self.step();
+                self.step_pc();
             }
             // Bitwise XOR, Vx ^= Vy
             (0x8, x, y, 0x3) => {
                 self.reg[x as usize] ^= self.reg[y as usize];
-                self.step();
+                self.step_pc();
             }
             // Vx += Vy
             (0x8, x, y, 0x4) => {
                 self.reg[x as usize] += self.reg[y as usize];
-                self.step();
+                self.step_pc();
             }
             // Vx -= Vy
             (0x8, x, y, 0x5) => {
                 self.reg[x as usize] -= self.reg[y as usize];
-                self.step();
+                self.step_pc();
             }
             // Vx >>= 1
             (0x8, x, y, 0x6) => {
                 self.reg[x as usize] >>= self.reg[y as usize];
-                self.step();
+                self.step_pc();
             }
             // Vx = Vy - Vx
             (0x8, x, y, 0x7) => {
                 self.reg[x as usize] = self.reg[y as usize] - self.reg[x as usize];
-                self.step();
+                self.step_pc();
             }
             // Vx <<= 1
             (0x8, x, y, 0xE) => {
                 self.reg[x as usize] <<= self.reg[y as usize];
-                self.step();
+                self.step_pc();
             }
             // Skip when Vx != Vy
             (0x9, x, y, 0x0) => self.skip_when(self.reg[x as usize] != self.reg[y as usize]),
@@ -196,8 +230,11 @@ impl Compy {
             // TODO: do we store a stack pointer here?
             (0xB, n1, n2, n3) => self.pc = self.reg[0] as u16 + addr(n1, n2, n3),
             // draw_sprite(Vx, Vy, N)
-            // TODO: impl
-            (0xD, x, y, n) => (),
+            (0xD, x, y, n) => {
+                let sprite = self.mem_slice(n as usize * 8).to_vec();
+                self.gfx.draw_sprite(x, y, &sprite);
+                self.step_pc();
+            }
             // Skip if (key(Vx))
             (0xE, x, 0x9, 0xE) => (),
             // Skip if (!key(Vx))
@@ -229,11 +266,11 @@ impl Compy {
     }
 }
 
-pub fn addr(n1: short, n2: short, n3: short) -> u16 {
+pub fn addr(n1: Short, n2: Short, n3: Short) -> u16 {
     ((n1 as u16) << 8) & ((n2 as u16) << 4) & (n3 as u16)
 }
 
-pub fn val(n1: short, n2: short) -> u8 {
+pub fn val(n1: Short, n2: Short) -> u8 {
     ((n1 as u8) << 4) & (n2 as u8)
 }
 

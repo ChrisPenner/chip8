@@ -36,7 +36,7 @@ fn main() {
     let mut compy = Compy::new();
 
     'running: loop {
-        compy.step();
+        compy.single_cycle();
 
         i = (i + 1) % 255;
         for event in event_pump.poll_iter() {
@@ -46,6 +46,14 @@ fn main() {
                     keycode: Some(Keycode::Escape),
                     ..
                 } => break 'running,
+                Event::KeyDown {
+                    keycode: Some(keycode),
+                    ..
+                } => compy.set_key_state(true, keycode),
+                Event::KeyUp {
+                    keycode: Some(keycode),
+                    ..
+                } => compy.set_key_state(false, keycode),
                 _ => {}
             }
         }
