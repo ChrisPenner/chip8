@@ -1,20 +1,22 @@
 type OpCode = u16;
 
+use crate::graphics;
+
 // https://multigesture.net/articles/how-to-write-an-emulator-chip-8-interpreter/
 
-struct Compy {
-    memory: [u8; 4096],
-    regsters: [u8; 16],
-    i: u16,
-    pc: u16,
-    gfx: [bool; 64 * 32],
-    delay_timer: u8,
-    sound_timer: u8,
-    stack: [u16; 16],
-    sp: u16,
-    key: [bool; 16],
+pub struct Compy {
+    pub memory: [u8; 4096],
+    pub reg: [u8; 16],
+    pub i: u16,
+    pub pc: u16,
+    pub gfx: graphics::Screen,
+    pub delay_timer: u8,
+    pub sound_timer: u8,
+    pub stack: [u16; 16],
+    pub sp: u16,
+    pub key: [bool; 16],
 
-    draw_flag: bool,
+    pub draw_flag: bool,
 }
 
 pub fn machine() {
@@ -39,13 +41,13 @@ pub fn machine() {
 }
 
 impl Compy {
-    fn new() -> Compy {
+    pub fn new() -> Compy {
         return Compy {
             memory: [0; 4096],
-            regsters: [0; 16],
+            reg: [0; 16],
             i: 0,
             pc: 0x200,
-            gfx: [false; 64 * 32],
+            gfx: graphics::Screen::new(),
             delay_timer: 0,
             sound_timer: 0,
             stack: [0; 16],
@@ -54,7 +56,7 @@ impl Compy {
             draw_flag: false,
         };
     }
-    fn step(&mut self) {
+    pub fn step(&mut self) {
         let pc = self.pc as usize;
         // Fetch Opcode
         let opcode: OpCode = ((self.memory[pc] as u16) << 8) | (self.memory[pc + 1] as u16);
@@ -65,8 +67,11 @@ impl Compy {
         // Update timers
         ()
     }
+    pub fn clear_display(&mut self) {
+        self.gfx.clear();
+    }
 
-    fn run_op(&mut self, opcode: OpCode) {
+    pub fn run_op(&mut self, opcode: OpCode) {
         let shorts: (u8, u8, u8, u8) = (
             ((opcode & 0xF000) >> 12) as u8,
             ((opcode & 0x0F00) >> 8) as u8,
@@ -74,12 +79,12 @@ impl Compy {
             (opcode & 0x000F) as u8,
         );
         match shorts {
-            // Call machine code (optional)
-            (0x0, x, y, z) => (),
             // clear display
-            (0x0, 0x0, 0xE, 0x0) => (),
+            (0x0, 0x0, 0xE, 0x0) => self.clear_display(),
             // RETURN
             (0x0, 0x0, 0xE, 0xE) => (),
+            // Call machine code (optional)
+            (0x0, x, y, z) => (),
             // GOTO NNN
             (0x1, n1, n2, n3) => (),
             // Call Subroutine at NNN
@@ -113,7 +118,7 @@ impl Compy {
             // Vx <<= 1
             (0x8, x, y, 0xE) => (),
             // Skip when Vx != Vy
-            (0x8, x, y, 0xE) => (),
+            (0x9, x, y, 0x0) => (),
             // I = NNN
             (0xA, n1, n2, n3) => (),
             // PC = V0 + NNN
