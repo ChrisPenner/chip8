@@ -1,7 +1,7 @@
 type OpCode = u16;
 
+use crate::font;
 use crate::graphics;
-
 use sdl2::keyboard::Keycode;
 
 // Short is actually just 4 bits.
@@ -19,7 +19,8 @@ pub struct Compy {
     pub sound_timer: u8,
     pub stack: [u16; 16],
     pub sp: usize,
-    pub key: [bool; 16],
+    pub keys: [bool; 16],
+    pub key_buffer: Option<u8>,
 
     pub draw_flag: bool,
 }
@@ -43,7 +44,7 @@ pub fn machine() {
 
 impl Compy {
     pub fn new() -> Compy {
-        return Compy {
+        let mut compy = Compy {
             memory: [0; 4096],
             reg: [0; 16],
             i: 0,
@@ -53,15 +54,22 @@ impl Compy {
             sound_timer: 0,
             stack: [0; 16],
             sp: 0,
-            key: [false; 16],
+            keys: [false; 16],
             draw_flag: false,
+            key_buffer: None,
         };
+        compy.memory[0x50..0x50 + font::FONTSET.len()].copy_from_slice(&font::FONTSET);
+        return compy;
+    }
+    fn select_char(&mut self, which_char: u8) {
+        self.i = 0x50 + (which_char as u16 * 5);
     }
     pub fn single_cycle(&mut self) {
         let pc = self.pc as usize;
         // Fetch Opcode
         let opcode: OpCode = ((self.memory[pc] as u16) << 8) | (self.memory[pc + 1] as u16);
         self.run_op(opcode);
+        self.key_buffer = None;
 
         // Update timers
         ()
@@ -81,24 +89,9 @@ impl Compy {
     // |A|0|B|F|                |Z|X|C|V|
     // +-+-+-+-+                +-+-+-+-+
     pub fn set_key_state(&mut self, state: bool, keycode: Keycode) {
-        match keycode {
-            Keycode::Num1 => self.key[0x1] = state,
-            Keycode::Num2 => self.key[0x2] = state,
-            Keycode::Num3 => self.key[0x3] = state,
-            Keycode::Num4 => self.key[0xc] = state,
-            Keycode::Q => self.key[0x4] = state,
-            Keycode::W => self.key[0x5] = state,
-            Keycode::E => self.key[0x6] = state,
-            Keycode::R => self.key[0xd] = state,
-            Keycode::A => self.key[0x7] = state,
-            Keycode::S => self.key[0x8] = state,
-            Keycode::D => self.key[0x9] = state,
-            Keycode::F => self.key[0xe] = state,
-            Keycode::Z => self.key[0xa] = state,
-            Keycode::X => self.key[0x0] = state,
-            Keycode::C => self.key[0xb] = state,
-            Keycode::V => self.key[0xf] = state,
-            _ => (),
+        if let Some(keynum) = keynum_for_keycode(keycode) {
+            self.keys[keynum as usize] = state;
+            self.key_buffer = Some(keynum);
         }
     }
 
@@ -196,26 +189,44 @@ impl Compy {
             }
             // Vx += Vy
             (0x8, x, y, 0x4) => {
-                self.reg[x as usize] += self.reg[y as usize];
+                let vx = self.reg[x as usize];
+                let vy = self.reg[y as usize];
+                let (r, carry) = vx.overflowing_add(vy);
+                self.reg[x as usize] = r;
+                self.reg[0xf] = carry as u8;
                 self.step_pc();
             }
             // Vx -= Vy
             (0x8, x, y, 0x5) => {
-                self.reg[x as usize] -= self.reg[y as usize];
+                let vx = self.reg[x as usize];
+                let vy = self.reg[y as usize];
+                // TODO: double-check this logic;
+                let (r, did_borrow) = vx.borrowing_sub(vy, false);
+                self.reg[x as usize] = r;
+                self.reg[0xf] = !did_borrow as u8;
                 self.step_pc();
             }
             // Vx >>= 1
             (0x8, x, y, 0x6) => {
+                let vx = self.reg[x as usize];
+                self.reg[0xf] = vx & 0x1;
                 self.reg[x as usize] >>= self.reg[y as usize];
                 self.step_pc();
             }
             // Vx = Vy - Vx
             (0x8, x, y, 0x7) => {
-                self.reg[x as usize] = self.reg[y as usize] - self.reg[x as usize];
+                let vx = self.reg[x as usize];
+                let vy = self.reg[y as usize];
+
+                let (r, did_borrow) = vy.borrowing_sub(vx, false);
+                self.reg[x as usize] = r;
+                self.reg[0xf] = !did_borrow as u8;
                 self.step_pc();
             }
             // Vx <<= 1
             (0x8, x, y, 0xE) => {
+                let vx = self.reg[x as usize];
+                self.reg[0xf] = vx >> 7;
                 self.reg[x as usize] <<= self.reg[y as usize];
                 self.step_pc();
             }
@@ -231,36 +242,85 @@ impl Compy {
             (0xB, n1, n2, n3) => self.pc = self.reg[0] as u16 + addr(n1, n2, n3),
             // draw_sprite(Vx, Vy, N)
             (0xD, x, y, n) => {
+                let vx = self.reg[x as usize];
+                let vy = self.reg[y as usize];
                 let sprite = self.mem_slice(n as usize * 8).to_vec();
-                self.gfx.draw_sprite(x, y, &sprite);
+                let collision = self.gfx.draw_sprite(vx, vy, &sprite);
+                self.reg[0xf] = collision as u8;
                 self.step_pc();
             }
             // Skip if (key(Vx))
-            (0xE, x, 0x9, 0xE) => (),
+            (0xE, x, 0x9, 0xE) => {
+                let keycode = self.reg[x as usize];
+                self.skip_when(self.keys[keycode as usize])
+            }
             // Skip if (!key(Vx))
-            (0xE, x, 0xA, 0x1) => (),
+            (0xE, x, 0xA, 0x1) => {
+                let keycode = self.reg[x as usize];
+                self.skip_when(!self.keys[keycode as usize])
+            }
             // Vx = delay_timer()
-            (0xF, x, 0x0, 0x7) => (),
+            (0xF, x, 0x0, 0x7) => {
+                self.reg[x as usize] = self.delay_timer;
+                self.step_pc();
+            }
             // Vx = wait_for_key()
-            (0xF, x, 0x0, 0xA) => (),
+            (0xF, x, 0x0, 0xA) => {
+                if let Some(keynum) = self.key_buffer {
+                    self.reg[x as usize] = keynum;
+                    self.step_pc();
+                }
+
+                // TODO: check if timers still need to count down or not while blocking for a
+                // key?
+            }
             // delay_timer = Vx
-            (0xF, x, 0x1, 0x5) => (),
+            (0xF, x, 0x1, 0x5) => {
+                self.delay_timer = self.reg[x as usize];
+                self.step_pc();
+            }
             // sound_timer = Vx
-            (0xF, x, 0x1, 0x8) => (),
+            (0xF, x, 0x1, 0x8) => {
+                self.sound_timer = self.reg[x as usize];
+                self.step_pc();
+            }
             // I += Vx
-            (0xF, x, 0x1, 0xE) => (),
+            (0xF, x, 0x1, 0xE) => {
+                self.i += self.reg[x as usize] as u16;
+                self.step_pc();
+            }
             // I = select_char(Vx)
-            (0xF, x, 0x2, 0x9) => (),
+            (0xF, x, 0x2, 0x9) => {
+                self.select_char(self.reg[x as usize]);
+                self.step_pc();
+            }
             // Binary Coded Decimal
             // set_BCD(Vx)
             //   *(I+0) = BCD(3)
             //   *(I+1) = BCD(2)
             //   *(I+2) = BCD(1);
-            (0xF, x, 0x3, 0x3) => (),
-            // Store V0-Vx (inclusive) in memory from I.
-            (0xF, x, 0x5, 0x5) => (),
+            (0xF, x, 0x3, 0x3) => {
+                let n = self.reg[x as usize];
+                let i = self.i as usize;
+                // TODO: double check this logic.
+                self.memory[i] = n / 100;
+                self.memory[i + 1] = (n % 100) / 10;
+                self.memory[i + 2] = n % 10;
+                self.step_pc();
+            }
+            // Dump V0-Vx (inclusive) into memory at I.
+            (0xF, x, 0x5, 0x5) => {
+                let reg_data = self.reg[0..=(x as usize)].to_vec();
+                let i: usize = self.i as usize;
+                self.memory[i..=i + (x as usize)].copy_from_slice(&reg_data);
+                self.step_pc();
+            }
             // Fill V0 -> Vx (inclusive) from memory at I.
-            (0xF, x, 0x6, 0x5) => (),
+            (0xF, x, 0x6, 0x5) => {
+                let reg_data = self.mem_slice(x as usize).to_vec();
+                self.reg[0..=(x as usize)].copy_from_slice(&reg_data);
+                self.step_pc();
+            }
             _ => (),
         }
     }
@@ -272,6 +332,28 @@ pub fn addr(n1: Short, n2: Short, n3: Short) -> u16 {
 
 pub fn val(n1: Short, n2: Short) -> u8 {
     ((n1 as u8) << 4) & (n2 as u8)
+}
+
+pub fn keynum_for_keycode(keycode: Keycode) -> Option<u8> {
+    match keycode {
+        Keycode::Num1 => Some(0x1),
+        Keycode::Num2 => Some(0x2),
+        Keycode::Num3 => Some(0x3),
+        Keycode::Num4 => Some(0xc),
+        Keycode::Q => Some(0x4),
+        Keycode::W => Some(0x5),
+        Keycode::E => Some(0x6),
+        Keycode::R => Some(0xd),
+        Keycode::A => Some(0x7),
+        Keycode::S => Some(0x8),
+        Keycode::D => Some(0x9),
+        Keycode::F => Some(0xe),
+        Keycode::Z => Some(0xa),
+        Keycode::X => Some(0x0),
+        Keycode::C => Some(0xb),
+        Keycode::V => Some(0xf),
+        _ => None,
+    }
 }
 
 // (0x0, 0x0, 0xE, 0x0) => self.cls(),
