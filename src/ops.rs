@@ -254,10 +254,10 @@ impl Compy {
                 self.step_pc();
             }
             // Vx <<= 1
-            (0x8, x, y, 0xE) => {
+            (0x8, x, _y, 0xE) => {
                 let vx = self.reg[x as usize];
                 self.reg[0xf] = vx >> 7;
-                self.reg[x as usize] <<= self.reg[y as usize];
+                self.reg[x as usize] <<= 1;
                 self.step_pc();
             }
             // Skip when Vx != Vy
