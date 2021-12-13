@@ -9,15 +9,9 @@ pub struct Screen {
 
 impl Screen {
     pub fn new() -> Screen {
-        let mut s = Screen {
+        Screen {
             pixels: [true; WIDTH * HEIGHT],
-        };
-        s.pixels[10] = false;
-        s.pixels[40] = false;
-        s.pixels[44] = false;
-        s.pixels[57] = false;
-        s.pixels[300] = false;
-        s
+        }
     }
     pub fn clear(&mut self) {
         self.pixels.fill(false);

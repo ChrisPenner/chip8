@@ -86,13 +86,17 @@ impl Compy {
             .duration_since(UNIX_EPOCH)
             .expect("Time went backwards")
             .as_micros();
-        let frames_since_start = (now_micros - self.start_time_micros) / 60_000_000;
-        let frames_since_latest = (now_micros - self.latest_time_micros) / 60_000_000;
-        let new_frames = frames_since_latest - frames_since_start;
-        self.latest_time_micros = now_micros;
 
-        self.sound_timer = self.sound_timer.saturating_sub(new_frames as u8);
-        self.delay_timer = self.delay_timer.saturating_sub(new_frames as u8);
+        // let frames_since_start = (now_micros - self.start_time_micros) / 60_000_000;
+        // let frames_since_latest = (now_micros - self.latest_time_micros) / 60_000_000;
+        // let new_frames = frames_since_latest - frames_since_start;
+        // self.latest_time_micros = now_micros;
+
+        if (now_micros - self.latest_time_micros) > 16666 {
+            self.latest_time_micros = now_micros;
+            self.sound_timer = self.sound_timer.saturating_sub(1);
+            self.delay_timer = self.delay_timer.saturating_sub(1);
+        }
         ()
     }
     fn clear_display(&mut self) {
@@ -237,10 +241,10 @@ impl Compy {
                 self.step_pc();
             }
             // Vx >>= 1
-            (0x8, x, y, 0x6) => {
+            (0x8, x, _y, 0x6) => {
                 let vx = self.reg[x as usize];
                 self.reg[0xf] = vx & 0x1;
-                self.reg[x as usize] >>= self.reg[y as usize];
+                self.reg[x as usize] >>= 1;
                 self.step_pc();
             }
             // Vx = Vy - Vx
@@ -352,7 +356,7 @@ impl Compy {
             }
             // Fill V0 -> Vx (inclusive) from memory at I.
             (0xF, x, 0x6, 0x5) => {
-                let reg_data = self.mem_slice(x as usize).to_vec();
+                let reg_data = self.mem_slice((x + 1) as usize).to_vec();
                 self.reg[0..=(x as usize)].copy_from_slice(&reg_data);
                 self.step_pc();
             }
