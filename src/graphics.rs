@@ -43,9 +43,10 @@ impl Screen {
         let mut collision = false;
         let x: usize = x as usize;
         let y: usize = y as usize;
+        println!("x: {}, y: {}, sprln: {}", x, y, sprite.len());
         for (i, n) in sprite.into_iter().enumerate() {
             let bin: [bool; 8] = u8_to_binary(*n);
-            let offset = (x * y) + i;
+            let offset = x + ((y + i) * WIDTH);
             collision |= self.pixels[offset..offset + 8]
                 .into_iter()
                 .zip(bin.into_iter())
@@ -57,7 +58,7 @@ impl Screen {
 }
 
 fn u8_to_binary(n: u8) -> [bool; 8] {
-    let arr = [false; 8];
+    let mut arr = [false; 8];
     arr[0] = (n & 0b10000000) == 0b10000000;
     arr[1] = (n & 0b01000000) == 0b01000000;
     arr[2] = (n & 0b00100000) == 0b00100000;

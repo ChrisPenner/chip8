@@ -1,7 +1,12 @@
 type OpCode = u16;
 
+use std::fs;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
+
 use crate::font;
 use crate::graphics;
+use rand::Rng;
 use sdl2::keyboard::Keycode;
 
 // Short is actually just 4 bits.
@@ -22,28 +27,18 @@ pub struct Compy {
     pub keys: [bool; 16],
     pub key_buffer: Option<u8>,
 
+    pub start_time_micros: u128,
+    pub latest_time_micros: u128,
     pub draw_flag: bool,
-}
-
-pub fn machine() {
-    // 0x000-0x1FF - Chip 8 interpreter (contains font set in emu)
-    // 0x050-0x0A0 - Used for the built in 4x5 pixel font set (0-F)
-    // 0x200-0xFFF - Program ROM and work RAM
-    println!("hi");
-
-    loop {
-        // Emulate one cycle
-
-        // If the draw flag is set, update the screen
-        // drawGraphics();
-
-        // Store key press state (Press and Release)
-        // myChip8.setKeys();
-    }
+    rng: rand::prelude::ThreadRng,
 }
 
 impl Compy {
     pub fn new() -> Compy {
+        let start_micros = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_micros();
         let mut compy = Compy {
             memory: [0; 4096],
             reg: [0; 16],
@@ -57,9 +52,21 @@ impl Compy {
             keys: [false; 16],
             draw_flag: false,
             key_buffer: None,
+            start_time_micros: start_micros,
+            latest_time_micros: start_micros,
+            rng: rand::thread_rng(),
         };
         compy.memory[0x50..0x50 + font::FONTSET.len()].copy_from_slice(&font::FONTSET);
         return compy;
+    }
+    pub fn load_rom(&mut self, filename: &str) {
+        let bytes = fs::read(filename).expect("Error reading rom");
+        // println!("{:#?}", bytes);
+        self.memory[0x200..0x200 + bytes.len()].copy_from_slice(&bytes);
+        // self.memory
+        //     .into_iter()
+        //     .enumerate()
+        //     .for_each(|(i, b)| println!("{:#x}: {:#x}", i, b));
     }
     fn select_char(&mut self, which_char: u8) {
         self.i = 0x50 + (which_char as u16 * 5);
@@ -68,10 +75,24 @@ impl Compy {
         let pc = self.pc as usize;
         // Fetch Opcode
         let opcode: OpCode = ((self.memory[pc] as u16) << 8) | (self.memory[pc + 1] as u16);
+
+        println!("Running opcode: {:#x}", opcode);
         self.run_op(opcode);
+        self.print_state();
         self.key_buffer = None;
 
         // Update timers
+        let now_micros = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_micros();
+        let frames_since_start = (now_micros - self.start_time_micros) / 60_000_000;
+        let frames_since_latest = (now_micros - self.latest_time_micros) / 60_000_000;
+        let new_frames = frames_since_latest - frames_since_start;
+        self.latest_time_micros = now_micros;
+
+        self.sound_timer = self.sound_timer.saturating_sub(new_frames as u8);
+        self.delay_timer = self.delay_timer.saturating_sub(new_frames as u8);
         ()
     }
     fn clear_display(&mut self) {
@@ -124,6 +145,10 @@ impl Compy {
         &self.memory[i..i + size]
     }
 
+    pub fn print_state(&self) {
+        println!("Reg: {:?}", self.reg);
+        println!("PC: {:#x}, I: {:#x}", self.pc, self.i);
+    }
     pub fn run_op(&mut self, opcode: OpCode) {
         let shorts: (Short, Short, Short, Short) = (
             ((opcode & 0xF000) >> 12) as Short,
@@ -145,12 +170,16 @@ impl Compy {
             (0x0, _x, _y, _z) => {
                 panic!("Machine code procedures not implemented.");
             }
-            // subroutine NNN
-            (0x1, n1, n2, n3) => self.pc = addr(n1, n2, n3),
+            // GOTO NNN
+            (0x1, n1, n2, n3) => {
+                println!("ADDR: {:#x}", addr(n1, n2, n3));
+                self.pc = addr(n1, n2, n3);
+            }
             // Call Subroutine at NNN
             (0x2, n1, n2, n3) => self.subroutine(addr(n1, n2, n3)),
             // Skip when (Vx == NN)
             (0x3, x, n1, n2) => {
+                println!("{} == {}", self.reg[x as usize], val(n1, n2));
                 self.skip_when(self.reg[x as usize] == val(n1, n2));
             }
             // Skip when (Vx != NN)
@@ -164,7 +193,8 @@ impl Compy {
             }
             // Vx += NN
             (0x7, x, n1, n2) => {
-                self.reg[x as usize] += val(n1, n2);
+                let (r, _) = self.reg[x as usize].overflowing_add(val(n1, n2));
+                self.reg[x as usize] = r;
                 self.step_pc();
             }
             // Vx = Vy
@@ -240,11 +270,16 @@ impl Compy {
             // PC = V0 + NNN
             // TODO: do we store a stack pointer here?
             (0xB, n1, n2, n3) => self.pc = self.reg[0] as u16 + addr(n1, n2, n3),
+
+            (0xC, x, n1, n2) => {
+                self.reg[x as usize] = self.rng.gen::<u8>() & val(n1, n2);
+                self.step_pc()
+            }
             // draw_sprite(Vx, Vy, N)
             (0xD, x, y, n) => {
                 let vx = self.reg[x as usize];
                 let vy = self.reg[y as usize];
-                let sprite = self.mem_slice(n as usize * 8).to_vec();
+                let sprite = self.mem_slice(n as usize).to_vec();
                 let collision = self.gfx.draw_sprite(vx, vy, &sprite);
                 self.reg[0xf] = collision as u8;
                 self.step_pc();
@@ -321,17 +356,17 @@ impl Compy {
                 self.reg[0..=(x as usize)].copy_from_slice(&reg_data);
                 self.step_pc();
             }
-            _ => (),
+            _ => panic!("Bad op-code. {:#x}", opcode),
         }
     }
 }
 
 pub fn addr(n1: Short, n2: Short, n3: Short) -> u16 {
-    ((n1 as u16) << 8) & ((n2 as u16) << 4) & (n3 as u16)
+    ((n1 as u16) << 8) | ((n2 as u16) << 4) | (n3 as u16)
 }
 
 pub fn val(n1: Short, n2: Short) -> u8 {
-    ((n1 as u8) << 4) & (n2 as u8)
+    ((n1 as u8) << 4) | (n2 as u8)
 }
 
 pub fn keynum_for_keycode(keycode: Keycode) -> Option<u8> {
@@ -355,24 +390,3 @@ pub fn keynum_for_keycode(keycode: Keycode) -> Option<u8> {
         _ => None,
     }
 }
-
-// (0x0, 0x0, 0xE, 0x0) => self.cls(),
-// (0x0, 0x0, 0xE, 0xE) => self.ret(),
-// // 0NNN = sys addr : ignore
-// (0x1, _, _, _) => self.jump_addr(op & 0x0FFF),
-// (0x2, _, _, _) => self.call_addr(op & 0x0FFF),
-// (0x3, x, _, _) => self.se_vx_nn(x, (op & 0x00FF) as u8),
-// (0x4, x, _, _) => self.sne_vx_nn(x, (op & 0x00FF) as u8),
-// (0x5, x, y, 0x0) => self.se_vx_vy(x, y),
-// (0x6, x, _, _) => self.ld_vx_nn(x, (op & 0x00FF) as u8),
-// (0x7, x, _, _) => self.add_vx_nn(x, (op & 0x00FF) as u8),
-// (0x8, x, y, 0x0) => self.ld_vx_vy(x, y),
-// (0x8, x, y, 0x1) => self.or_vx_vy(x, y),
-// (0x8, x, y, 0x2) => self.and_vx_vy(x, y),
-// (0x8, x, y, 0x3) => self.xor_vx_vy(x, y),
-// (0x8, x, y, 0x4) => self.add_vx_vy(x, y),
-// (0x8, x, y, 0x5) => self.sub_vx_vy(x, y),
-// (0x8, x, y, 0x6) => self.shr_vx_vy(x, y),
-// (0x8, x, y, 0x7) => self.subn_vx_vy(x, y),
-// (0x8, x, y, 0xE) => self.shl_vx_vy(x, y),
-// (0x9, x, y, 0x0) => self.sne_vx_vy(x, y),

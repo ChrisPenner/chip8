@@ -36,6 +36,7 @@ fn main() {
     let mut i = 0;
 
     let mut compy = Compy::new();
+    compy.load_rom("./roms/c8_test.c8");
 
     'running: loop {
         compy.single_cycle();

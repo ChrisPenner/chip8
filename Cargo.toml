@@ -8,6 +8,9 @@ edition = "2021"
 [features]
 slice_group_by = []
 
+[dependencies]
+rand = "0.8.4"
+
 [dependencies.sdl2]
 version = "0.32.2"
 default-features = false
