@@ -8,6 +8,7 @@ use crate::font;
 use crate::graphics;
 use rand::Rng;
 use sdl2::keyboard::Keycode;
+use sdl2::rect::Point;
 
 // Short is actually just 4 bits.
 type Short = u8;
@@ -29,7 +30,7 @@ pub struct Compy {
 
     pub start_time_micros: u128,
     pub latest_time_micros: u128,
-    pub draw_flag: bool,
+    pub draw_ops: Vec<DrawOp>,
     rng: rand::prelude::ThreadRng,
 }
 
@@ -50,7 +51,7 @@ impl Compy {
             stack: [0; 16],
             sp: 0,
             keys: [false; 16],
-            draw_flag: false,
+            draw_ops: vec![],
             key_buffer: None,
             start_time_micros: start_micros,
             latest_time_micros: start_micros,
@@ -77,7 +78,7 @@ impl Compy {
         let opcode: OpCode = ((self.memory[pc] as u16) << 8) | (self.memory[pc + 1] as u16);
 
         self.run_op(opcode);
-        self.print_state(opcode);
+        // self.print_state(opcode);
         self.key_buffer = None;
 
         // Update timers
@@ -97,9 +98,6 @@ impl Compy {
             self.delay_timer = self.delay_timer.saturating_sub(1);
         }
         ()
-    }
-    fn clear_display(&mut self) {
-        self.gfx.clear();
     }
 
     // Keypad                   Keyboard
@@ -167,7 +165,8 @@ impl Compy {
         match shorts {
             // clear display
             (0x0, 0x0, 0xE, 0x0) => {
-                self.clear_display();
+                self.gfx.clear();
+                self.draw_ops.push(DrawOp::Clear);
                 self.step_pc();
             }
             // RETURN
@@ -176,7 +175,9 @@ impl Compy {
             }
             // Call machine code (optional)
             (0x0, _x, _y, _z) => {
-                panic!("Machine code procedures not implemented.");
+                println!("Ignoring machine code instruction.");
+                self.step_pc();
+                // panic!("Machine code procedures not implemented.");
             }
             // GOTO NNN
             (0x1, n1, n2, n3) => {
@@ -287,7 +288,8 @@ impl Compy {
                 let vx = self.reg[x as usize];
                 let vy = self.reg[y as usize];
                 let sprite = self.mem_slice(n as usize).to_vec();
-                let collision = self.gfx.draw_sprite(vx, vy, &sprite);
+                let (collision, ops) = self.gfx.draw_sprite(vx, vy, &sprite);
+                self.draw_ops.push(DrawOp::Sprite(ops));
                 self.reg[0xf] = collision as u8;
                 self.step_pc();
             }
@@ -396,4 +398,10 @@ pub fn keynum_for_keycode(keycode: Keycode) -> Option<u8> {
         Keycode::V => Some(0xf),
         _ => None,
     }
+}
+
+#[derive(PartialEq, Eq)]
+pub enum DrawOp {
+    Clear,
+    Sprite(Vec<(Point, bool)>),
 }

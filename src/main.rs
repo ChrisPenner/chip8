@@ -5,7 +5,6 @@ use sdl2::pixels::Color;
 use sdl2::rect::Rect;
 use sdl2::render::Canvas;
 use sdl2::video::Window;
-use std::time::Duration;
 
 mod font;
 mod graphics;
@@ -27,9 +26,9 @@ fn main() {
         .build()
         .unwrap();
 
-    let mut canvas = window.into_canvas().build().unwrap();
+    let mut canvas = window.into_canvas().present_vsync().build().unwrap();
 
-    canvas.set_draw_color(Color::RGB(0, 255, 255));
+    canvas.set_draw_color(Color::RGB(0, 255, 0));
     canvas.clear();
     canvas.present();
     let mut event_pump = sdl_context.event_pump().unwrap();
@@ -39,7 +38,7 @@ fn main() {
     // compy.load_rom("./roms/c8_test.c8");
     // compy.load_rom("./roms/maze_alt.ch8");
     // compy.load_rom("./roms/Particle Demo [zeroZshadow, 2008].ch8");
-    compy.load_rom("./roms/games/Pong [Paul Vervalin, 1990].ch8");
+    compy.load_rom("./roms/programs/Random Number Test [Matthew Mikolay, 2010].ch8");
     // compy.load_rom("./roms/games/ZeroPong [zeroZshadow, 2007].ch8");
 
     'running: loop {
@@ -64,30 +63,38 @@ fn main() {
                 _ => {}
             }
         }
-        // The rest of the game loop goes here...
 
-        draw(&compy, &mut canvas);
-
-        ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
+        let mut clear_i = None;
+        if compy.draw_ops.len() != 0 {
+            for (i, op) in compy.draw_ops.iter().enumerate() {
+                match op {
+                    ops::DrawOp::Clear => {
+                        canvas.set_draw_color(Color::RGB(0, 0, 0));
+                        canvas.clear();
+                        clear_i = Some(i);
+                    }
+                    ops::DrawOp::Sprite(v) => {
+                        for (p, b) in v {
+                            draw_pixel(&mut canvas, p, *b)
+                        }
+                    } // draw(&compy, &mut canvas);
+                      // compy.draw_flag = false;
+                }
+            }
+            if let Some(clear_index) = clear_i {
+                compy.draw_ops = compy.draw_ops.split_off(clear_index);
+            }
+            canvas.present();
+        }
     }
 }
 
-fn draw(compy: &Compy, canvas: &mut Canvas<Window>) {
-    canvas.clear();
-    let (lit, unlit) = compy.gfx.pixel_sets();
-
-    canvas.set_draw_color(Color::RGB(255, 255, 255));
-    for p in lit {
-        draw_pixel(canvas, p);
+pub fn draw_pixel(canvas: &mut Canvas<Window>, p: &sdl2::rect::Point, b: bool) {
+    if b {
+        canvas.set_draw_color(Color::RGB(255, 255, 255));
+    } else {
+        canvas.set_draw_color(Color::RGB(0, 0, 0));
     }
-    canvas.set_draw_color(Color::RGB(0, 0, 0));
-    for p in unlit {
-        draw_pixel(canvas, p);
-    }
-    canvas.present();
-}
-
-pub fn draw_pixel(canvas: &mut Canvas<Window>, p: sdl2::rect::Point) {
     let rect = Rect::new(
         p.x * PIXEL_SIZE as i32,
         p.y * PIXEL_SIZE as i32,

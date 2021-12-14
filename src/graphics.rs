@@ -33,21 +33,28 @@ impl Screen {
         )
     }
 
-    pub fn draw_sprite(&mut self, x: u8, y: u8, sprite: &[u8]) -> bool {
+    pub fn draw_sprite(&mut self, x: u8, y: u8, sprite: &[u8]) -> (bool, Vec<(Point, bool)>) {
         let mut collision = false;
         let x: usize = x as usize;
         let y: usize = y as usize;
-        // println!("x: {}, y: {}, sprln: {}", x, y, sprite.len());
+        let mut update_vec = vec![];
         for (i, n) in sprite.into_iter().enumerate() {
+            let y = y + i;
             let bin: [bool; 8] = u8_to_binary(*n);
-            let offset = x + ((y + i) * WIDTH);
+            let offset = x + (y * WIDTH);
             collision |= self.pixels[offset..offset + 8]
                 .into_iter()
                 .zip(bin.into_iter())
                 .any(|(before, after)| *before && !after);
             self.pixels[offset..offset + 8].copy_from_slice(&bin);
+            let mut draw_ops: Vec<(Point, bool)> = bin
+                .into_iter()
+                .enumerate()
+                .map(|(j, b)| (Point::new((x + j) as i32, y as i32), b))
+                .collect();
+            update_vec.append(&mut draw_ops)
         }
-        return collision;
+        return (collision, update_vec);
     }
 }
 
