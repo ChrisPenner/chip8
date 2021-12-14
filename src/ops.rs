@@ -76,9 +76,8 @@ impl Compy {
         // Fetch Opcode
         let opcode: OpCode = ((self.memory[pc] as u16) << 8) | (self.memory[pc + 1] as u16);
 
-        println!("Running opcode: {:#x}", opcode);
         self.run_op(opcode);
-        self.print_state();
+        self.print_state(opcode);
         self.key_buffer = None;
 
         // Update timers
@@ -140,6 +139,7 @@ impl Compy {
 
     fn subroutine(&mut self, addr: u16) {
         self.stack[self.sp] = self.pc;
+        self.sp += 1;
         self.pc = addr;
     }
 
@@ -149,9 +149,13 @@ impl Compy {
         &self.memory[i..i + size]
     }
 
-    pub fn print_state(&self) {
+    pub fn print_state(&self, opcode: OpCode) {
+        println!("Running opcode: {:#x}", opcode);
         println!("Reg: {:?}", self.reg);
-        println!("PC: {:#x}, I: {:#x}", self.pc, self.i);
+        println!(
+            "PC: {:#x}, I: {:#x}, delay: {:#x}",
+            self.pc, self.i, self.delay_timer
+        );
     }
     pub fn run_op(&mut self, opcode: OpCode) {
         let shorts: (Short, Short, Short, Short) = (
@@ -176,14 +180,13 @@ impl Compy {
             }
             // GOTO NNN
             (0x1, n1, n2, n3) => {
-                println!("ADDR: {:#x}", addr(n1, n2, n3));
+                // println!("ADDR: {:#x}", addr(n1, n2, n3));
                 self.pc = addr(n1, n2, n3);
             }
             // Call Subroutine at NNN
             (0x2, n1, n2, n3) => self.subroutine(addr(n1, n2, n3)),
             // Skip when (Vx == NN)
             (0x3, x, n1, n2) => {
-                println!("{} == {}", self.reg[x as usize], val(n1, n2));
                 self.skip_when(self.reg[x as usize] == val(n1, n2));
             }
             // Skip when (Vx != NN)

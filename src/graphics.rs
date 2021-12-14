@@ -10,7 +10,7 @@ pub struct Screen {
 impl Screen {
     pub fn new() -> Screen {
         Screen {
-            pixels: [true; WIDTH * HEIGHT],
+            pixels: [false; WIDTH * HEIGHT],
         }
     }
     pub fn clear(&mut self) {
@@ -37,7 +37,7 @@ impl Screen {
         let mut collision = false;
         let x: usize = x as usize;
         let y: usize = y as usize;
-        println!("x: {}, y: {}, sprln: {}", x, y, sprite.len());
+        // println!("x: {}, y: {}, sprln: {}", x, y, sprite.len());
         for (i, n) in sprite.into_iter().enumerate() {
             let bin: [bool; 8] = u8_to_binary(*n);
             let offset = x + ((y + i) * WIDTH);

@@ -36,7 +36,11 @@ fn main() {
     let mut i = 0;
 
     let mut compy = Compy::new();
-    compy.load_rom("./roms/c8_test.c8");
+    // compy.load_rom("./roms/c8_test.c8");
+    // compy.load_rom("./roms/maze_alt.ch8");
+    // compy.load_rom("./roms/Particle Demo [zeroZshadow, 2008].ch8");
+    compy.load_rom("./roms/games/Pong [Paul Vervalin, 1990].ch8");
+    // compy.load_rom("./roms/games/ZeroPong [zeroZshadow, 2007].ch8");
 
     'running: loop {
         compy.single_cycle();
